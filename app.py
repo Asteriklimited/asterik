@@ -17,6 +17,8 @@ def get_data(table):
     return pd.DataFrame(response.data)
 
 def add_data(table, data):
+    # Vade girilmediği için otomatik bugünün tarihini atıyoruz
+    data['vade'] = datetime.now().strftime('%Y-%m-%d')
     supabase.table(table).insert(data).execute()
 
 def update_status(table, id, status):
@@ -28,7 +30,7 @@ def delete_data(table, id):
 # --- ARAYÜZ ---
 st.title("💸 Ödeme Takip")
 
-# 5 Sekme: Dashboard, Çekler, Borçlar, DBS, Aylık Rapor
+# Sekmeler
 tab_dash, tab_cek, tab_borc, tab_dbs, tab_aylik = st.tabs(["📊 Dashboard", "📝 Çekler", "💳 Borçlar", "🏦 DBS", "📅 Aylık Rapor"])
 
 # --- DASHBOARD ---
@@ -38,7 +40,7 @@ with tab_dash:
     borc_df = get_data("borclar")
     dbs_df = get_data("dbs_odemeler")
     
-    # 3 Gün uyarısı (vade sütununa göre)
+    # 3 Gün Uyarısı
     yarin = datetime.now().date() + timedelta(days=3)
     tum_veriler = []
     for df, tip in [(cek_df, 'Çek'), (borc_df, 'Borç'), (dbs_df, 'DBS')]:
@@ -73,10 +75,10 @@ with tab_aylik:
                 df['vade'] = pd.to_datetime(df['vade'])
                 f_df = df[df['vade'].dt.month == ay_map[ay_secimi]]
                 if not f_df.empty: r_list.append(f_df)
-        if r_list: st.dataframe(pd.concat(r_list))
-        else: st.info("Kayıt bulunamadı.")
+        if r_list: st.dataframe(pd.concat(r_list).drop(columns=['vade'], errors='ignore'))
+        else: st.info("Bu ay kayıt bulunamadı.")
 
-# --- GENEL YÖNETİM ---
+# --- YÖNETİM ---
 def render_tab(table_name, title, columns_map):
     st.header(title)
     with st.expander(f"➕ Yeni {title} Ekle"):
@@ -88,14 +90,21 @@ def render_tab(table_name, title, columns_map):
 
     df = get_data(table_name)
     if not df.empty:
-        # Görünürlük ayarı: Vade sütununu gizliyoruz
+        # Vade gizlendi
         display_df = df.drop(columns=['vade'], errors='ignore')
         display_df.insert(0, "Seç", False)
-        edited_df = st.data_editor(display_df, use_container_width=True)
+        edited_df = st.data_editor(display_df, use_container_width=True, hide_index=True)
         
-        if st.button("✅ Ödendi/⏳ Ödenmedi/🗑️ Sil", key=f"btn_{table_name}"):
-            secilenler = edited_df[edited_df["Seç"] == True]["id"]
-            for sid in secilenler: update_status(table_name, sid, 'Ödendi')
+        # Butonlar
+        c1, c2, c3 = st.columns(3)
+        if c1.button("✅ Seçilenleri Ödendi Yap", key=f"btn1_{table_name}"):
+            for sid in edited_df[edited_df["Seç"] == True]["id"]: update_status(table_name, sid, 'Ödendi')
+            st.rerun()
+        if c2.button("⏳ Seçilenleri Ödenmedi Yap", key=f"btn2_{table_name}"):
+            for sid in edited_df[edited_df["Seç"] == True]["id"]: update_status(table_name, sid, 'Ödenmedi')
+            st.rerun()
+        if c3.button("🗑️ Seçilenleri Sil", key=f"btn3_{table_name}"):
+            for sid in edited_df[edited_df["Seç"] == True]["id"]: delete_data(table_name, sid)
             st.rerun()
 
 with tab_cek: render_tab("cekler", "Çek", {"cek_no": "Çek No", "aciklama": "Açıklama", "tutar": "Tutar"})
