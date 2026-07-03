@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
 
 # --- BAĞLANTI AYARLARI ---
-# Streamlit Cloud'da 'Secrets' kısmına eklemeyi unutmayın
+# Secret'lar Streamlit Cloud'da Settings > Secrets kısmına girilmelidir.
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -26,34 +26,21 @@ def update_status(table, id, status):
 def delete_data(table, id):
     supabase.table(table).delete().eq("id", id).execute()
 
-def to_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Veri')
-    return output.getvalue()
-
 # --- ARAYÜZ ---
 st.title("💸 Nakit Akış Yönetim Paneli (Online)")
 
 tab_dash, tab_cek, tab_borc, tab_dbs = st.tabs(["📊 Dashboard", "📝 Çekler", "💳 Borçlar", "🏦 DBS"])
 
-bugun = datetime.now().date()
-
 # --- DASHBOARD ---
 with tab_dash:
     st.header("Genel Durum")
-    
-    # Verileri çek
     cek_df = get_data("cekler")
     borc_df = get_data("borclar")
     dbs_df = get_data("dbs_odemeler")
     
-    # Basit bir dashboard özet hesaplaması
-    st.subheader("Bekleyen Yükümlülükler")
     col1, col2, col3 = st.columns(3)
-    
     for df, col, label in [(borc_df, col1, "Borç"), (cek_df, col2, "Çek"), (dbs_df, col3, "DBS")]:
-        if not df.empty:
+        if not df.empty and 'durum' in df.columns:
             tutar = df[df['durum'] == 'Ödenmedi']['tutar'].sum()
             col.metric(f"Bekleyen {label}", f"{tutar:,.2f} ₺")
 
@@ -67,20 +54,20 @@ def render_tab(table_name, title, columns_map):
             cols = st.columns(len(columns_map))
             inputs = {}
             for i, (key, label) in enumerate(columns_map.items()):
-                if "tarih" in key or "vade" in key:
-                    inputs[key] = cols[i].date_input(label)
+                # Benzersiz key ataması
+                k = f"{table_name}_{key}"
+                if "vade" in key:
+                    inputs[key] = cols[i].date_input(label, key=f"{k}_date")
                 elif "tutar" in key:
-                    inputs[key] = cols[i].number_input(label, format="%.2f")
+                    inputs[key] = cols[i].number_input(label, format="%.2f", key=f"{k}_num")
                 else:
-                    inputs[key] = cols[i].text_input(label)
+                    inputs[key] = cols[i].text_input(label, key=f"{k}_text")
             
             if st.form_submit_button("Kaydet"):
-                # --- DÜZELTME BURADA ---
-                # Tarih nesnelerini string'e çeviriyoruz
-                for key, value in inputs.items():
-                    if isinstance(value, (datetime, type(datetime.now().date()))):
-                        inputs[key] = str(value)
-                
+                # Tarihleri string'e çevir
+                for k, v in inputs.items():
+                    if hasattr(v, 'isoformat'):
+                        inputs[k] = v.isoformat()
                 add_data(table_name, inputs)
                 st.rerun()
 
@@ -89,8 +76,8 @@ def render_tab(table_name, title, columns_map):
     if not df.empty:
         st.markdown("### 🔍 Arama ve Filtreleme")
         f1, f2 = st.columns(2)
-        ara = f1.text_input("Ara...")
-        sadece_acik = f2.checkbox("Sadece Ödenmeyenler")
+        ara = f1.text_input("Ara...", key=f"{table_name}_ara")
+        sadece_acik = f2.checkbox("Sadece Ödenmeyenler", key=f"{table_name}_chk")
         
         filtered_df = df.copy()
         if sadece_acik:
@@ -99,19 +86,18 @@ def render_tab(table_name, title, columns_map):
             filtered_df = filtered_df[filtered_df.apply(lambda row: row.astype(str).str.contains(ara, case=False).any(), axis=1)]
 
         filtered_df.insert(0, "Seç", False)
-        edited_df = st.data_editor(filtered_df, use_container_width=True, hide_index=True)
+        edited_df = st.data_editor(filtered_df, use_container_width=True, hide_index=True, key=f"{table_name}_edit")
         
-        # Seçili olanları işle
         secilenler = edited_df[edited_df["Seç"] == True]["id"].tolist()
         if secilenler:
             c1, c2, c3 = st.columns(3)
-            if c1.button("✅ Ödendi", key=f"odendi_{table_name}"):
+            if c1.button("✅ Ödendi", key=f"btn_odendi_{table_name}"):
                 for sid in secilenler: update_status(table_name, sid, 'Ödendi')
                 st.rerun()
-            if c2.button("⏳ Ödenmedi", key=f"odenmedi_{table_name}"):
+            if c2.button("⏳ Ödenmedi", key=f"btn_odenmedi_{table_name}"):
                 for sid in secilenler: update_status(table_name, sid, 'Ödenmedi')
                 st.rerun()
-            if c3.button("🗑️ Sil", key=f"sil_{table_name}"):
+            if c3.button("🗑️ Sil", key=f"btn_sil_{table_name}"):
                 for sid in secilenler: delete_data(table_name, sid)
                 st.rerun()
 
