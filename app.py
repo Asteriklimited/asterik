@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 
 # --- BAĞLANTI AYARLARI ---
@@ -28,69 +28,76 @@ def delete_data(table, id):
 # --- ARAYÜZ ---
 st.title("💸 Ödeme Takip")
 
-tab_dash, tab_cek, tab_borc, tab_dbs = st.tabs(["📊 Dashboard", "📝 Çekler", "💳 Borçlar", "🏦 DBS"])
+# 5 Sekme: Dashboard, Çekler, Borçlar, DBS, Aylık Rapor
+tab_dash, tab_cek, tab_borc, tab_dbs, tab_aylik = st.tabs(["📊 Dashboard", "📝 Çekler", "💳 Borçlar", "🏦 DBS", "📅 Aylık Rapor"])
 
 # --- DASHBOARD ---
 with tab_dash:
-    st.header("📊 Genel Durum")
+    st.header("📊 Genel Durum ve Bildirimler")
     cek_df = get_data("cekler")
     borc_df = get_data("borclar")
     dbs_df = get_data("dbs_odemeler")
     
-    st.markdown("---")
+    # 3 Gün uyarısı (vade sütununa göre)
+    yarin = datetime.now().date() + timedelta(days=3)
+    tum_veriler = []
+    for df, tip in [(cek_df, 'Çek'), (borc_df, 'Borç'), (dbs_df, 'DBS')]:
+        if not df.empty and 'vade' in df.columns:
+            df['tip'] = tip
+            tum_veriler.append(df)
+    
+    if tum_veriler:
+        df_hepsi = pd.concat(tum_veriler)
+        df_hepsi['vade'] = pd.to_datetime(df_hepsi['vade']).dt.date
+        yaklasanlar = df_hepsi[(df_hepsi['vade'] <= yarin) & (df_hepsi['durum'] == 'Ödenmedi')]
+        
+        if not yaklasanlar.empty:
+            for _, row in yaklasanlar.iterrows():
+                st.warning(f"⚠️ **{row['tip']} Ödemesi Yaklaştı!** | Tutar: {row['tutar']:,.2f} ₺ | Detay: {row['aciklama']}")
+    
     col1, col2, col3 = st.columns(3)
     for df, col, label in [(borc_df, col1, "Borç"), (cek_df, col2, "Çek"), (dbs_df, col3, "DBS")]:
         if not df.empty and 'durum' in df.columns:
-            tutar = df[df['durum'] == 'Ödenmedi']['tutar'].sum()
-            col.metric(f"Bekleyen {label}", f"{tutar:,.2f} ₺")
+            col.metric(f"Bekleyen {label}", f"{df[df['durum'] == 'Ödenmedi']['tutar'].sum():,.2f} ₺")
+
+# --- AYLIK RAPOR ---
+with tab_aylik:
+    st.header("📅 Aylık Rapor")
+    ay_secimi = st.selectbox("Ay:", ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"])
+    if st.button("Raporu Getir"):
+        ay_map = {"Ocak": 1, "Şubat": 2, "Mart": 3, "Nisan": 4, "Mayıs": 5, "Haziran": 6, "Temmuz": 7, "Ağustos": 8, "Eylül": 9, "Ekim": 10, "Kasım": 11, "Aralık": 12}
+        r_list = []
+        for tablo in ["cekler", "borclar", "dbs_odemeler"]:
+            df = get_data(tablo)
+            if not df.empty:
+                df['vade'] = pd.to_datetime(df['vade'])
+                f_df = df[df['vade'].dt.month == ay_map[ay_secimi]]
+                if not f_df.empty: r_list.append(f_df)
+        if r_list: st.dataframe(pd.concat(r_list))
+        else: st.info("Kayıt bulunamadı.")
 
 # --- GENEL YÖNETİM ---
 def render_tab(table_name, title, columns_map):
     st.header(title)
-    
-    # Ekleme Formu
     with st.expander(f"➕ Yeni {title} Ekle"):
         with st.form(f"{table_name}_form", clear_on_submit=True):
-            cols = st.columns(len(columns_map))
-            inputs = {}
-            for i, (key, label) in enumerate(columns_map.items()):
-                k = f"{table_name}_{key}"
-                if "tutar" in key:
-                    inputs[key] = cols[i].number_input(label, format="%.2f", key=f"{k}_num")
-                else:
-                    inputs[key] = cols[i].text_input(label, key=f"{k}_text")
-            
+            inputs = {k: st.number_input(l, format="%.2f") if "tutar" in k else st.text_input(l) for k, l in columns_map.items()}
             if st.form_submit_button("Kaydet"):
                 add_data(table_name, inputs)
                 st.rerun()
 
-    # Tablo ve Filtreleme
     df = get_data(table_name)
     if not df.empty:
-        ara = st.text_input("Ara...", key=f"{table_name}_ara")
-        sadece_acik = st.checkbox("Sadece Ödenmeyenler", key=f"{table_name}_chk")
+        # Görünürlük ayarı: Vade sütununu gizliyoruz
+        display_df = df.drop(columns=['vade'], errors='ignore')
+        display_df.insert(0, "Seç", False)
+        edited_df = st.data_editor(display_df, use_container_width=True)
         
-        filtered_df = df.copy()
-        if sadece_acik: filtered_df = filtered_df[filtered_df['durum'] == 'Ödenmedi']
-        if ara: filtered_df = filtered_df[filtered_df.apply(lambda row: row.astype(str).str.contains(ara, case=False).any(), axis=1)]
+        if st.button("✅ Ödendi/⏳ Ödenmedi/🗑️ Sil", key=f"btn_{table_name}"):
+            secilenler = edited_df[edited_df["Seç"] == True]["id"]
+            for sid in secilenler: update_status(table_name, sid, 'Ödendi')
+            st.rerun()
 
-        filtered_df.insert(0, "Seç", False)
-        edited_df = st.data_editor(filtered_df, use_container_width=True, hide_index=True, key=f"{table_name}_edit")
-        
-        secilenler = edited_df[edited_df["Seç"] == True]["id"].tolist()
-        if secilenler:
-            c1, c2, c3 = st.columns(3)
-            if c1.button("✅ Ödendi", key=f"b1_{table_name}"):
-                for sid in secilenler: update_status(table_name, sid, 'Ödendi')
-                st.rerun()
-            if c2.button("⏳ Ödenmedi", key=f"b2_{table_name}"):
-                for sid in secilenler: update_status(table_name, sid, 'Ödenmedi')
-                st.rerun()
-            if c3.button("🗑️ Sil", key=f"b3_{table_name}"):
-                for sid in secilenler: delete_data(table_name, sid)
-                st.rerun()
-
-# --- SEKMELERİ ÇAĞIR ---
 with tab_cek: render_tab("cekler", "Çek", {"cek_no": "Çek No", "aciklama": "Açıklama", "tutar": "Tutar"})
 with tab_borc: render_tab("borclar", "Borç", {"alacakli": "Alacaklı", "aciklama": "Açıklama", "tutar": "Tutar"})
 with tab_dbs: render_tab("dbs_odemeler", "DBS", {"kurum_banka": "Kurum/Banka", "aciklama": "Açıklama", "tutar": "Tutar"})
