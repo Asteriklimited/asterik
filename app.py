@@ -75,6 +75,12 @@ def render_tab(table_name, title, columns_map):
                     inputs[key] = cols[i].text_input(label)
             
             if st.form_submit_button("Kaydet"):
+                # --- DÜZELTME BURADA ---
+                # Tarih nesnelerini string'e çeviriyoruz
+                for key, value in inputs.items():
+                    if isinstance(value, (datetime, type(datetime.now().date()))):
+                        inputs[key] = str(value)
+                
                 add_data(table_name, inputs)
                 st.rerun()
 
