@@ -17,6 +17,7 @@ def get_data(table):
     return pd.DataFrame(response.data)
 
 def add_data(table, data):
+    # Vade sistem için şart, gizli otomatik ekleniyor
     data['vade'] = datetime.now().strftime('%Y-%m-%d')
     supabase.table(table).insert(data).execute()
 
@@ -26,31 +27,28 @@ def update_status(table, id, status):
 def delete_data(table, id):
     supabase.table(table).delete().eq("id", id).execute()
 
+# --- DETAY BELİRLEME MANTIĞI ---
+def get_detay(row, tip):
+    # Çekler için açıklamayı baz alıyoruz, diğerleri için kendi özel sütunları
+    if tip == 'Çek': return row.get('aciklama', '')
+    if tip == 'Borç': return row.get('alacakli', '')
+    if tip == 'DBS': return row.get('kurum_banka', '')
+    return row.get('aciklama', '')
+
 # --- ARAYÜZ ---
 st.title("💸 Ödeme Takip")
 tab_dash, tab_cek, tab_borc, tab_dbs, tab_aylik = st.tabs(["📊 Dashboard", "📝 Çekler", "💳 Borçlar", "🏦 DBS", "📅 Aylık Rapor"])
 
 # --- DASHBOARD ---
 with tab_dash:
-    st.header("📊 Genel Durum ve Bildirimler")
-    cek_df = get_data("cekler")
-    borc_df = get_data("borclar")
-    dbs_df = get_data("dbs_odemeler")
+    st.header("📊 Genel Durum")
+    cek_df, borc_df, dbs_df = get_data("cekler"), get_data("borclar"), get_data("dbs_odemeler")
     
     yarin = datetime.now().date() + timedelta(days=3)
-    
-    # Uyarılar için detay belirleme mantığı
-    def get_detay(row, tip):
-        if tip == 'Çek': return row.get('cek_no', '')
-        if tip == 'Borç': return row.get('alacakli', '')
-        if tip == 'DBS': return row.get('kurum_banka', '')
-        return row.get('aciklama', '')
-
     tum_veriler = []
     for df, tip in [(cek_df, 'Çek'), (borc_df, 'Borç'), (dbs_df, 'DBS')]:
         if not df.empty and 'vade' in df.columns:
             df['tip'] = tip
-            # Detay sütununu oluştur
             df['detay_bilgi'] = df.apply(lambda row: get_detay(row, tip), axis=1)
             tum_veriler.append(df)
     
@@ -72,6 +70,7 @@ with tab_dash:
 with tab_aylik:
     st.header("📅 Aylık Rapor")
     ay_secimi = st.selectbox("Ay:", ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"])
+    
     if st.button("Raporu Getir"):
         ay_map = {"Ocak": 1, "Şubat": 2, "Mart": 3, "Nisan": 4, "Mayıs": 5, "Haziran": 6, "Temmuz": 7, "Ağustos": 8, "Eylül": 9, "Ekim": 10, "Kasım": 11, "Aralık": 12}
         r_list = []
@@ -81,10 +80,15 @@ with tab_aylik:
                 df['vade'] = pd.to_datetime(df['vade'])
                 f_df = df[df['vade'].dt.month == ay_map[ay_secimi]]
                 if not f_df.empty:
-                    f_df['detay'] = f_df.apply(lambda row: get_detay(row, tip), axis=1)
-                    r_list.append(f_df[['detay', 'aciklama', 'tutar', 'durum']])
-        if r_list: st.dataframe(pd.concat(r_list), use_container_width=True)
-        else: st.info("Bu ay kayıt bulunamadı.")
+                    f_df['Detay'] = f_df.apply(lambda row: get_detay(row, tip), axis=1)
+                    r_list.append(f_df[['Detay', 'aciklama', 'tutar', 'durum']])
+        
+        if r_list:
+            final_df = pd.concat(r_list)
+            st.metric("Bu Ay Toplam Ödeme", f"{final_df['tutar'].sum():,.2f} ₺")
+            st.dataframe(final_df, use_container_width=True)
+        else:
+            st.info("Bu ay kayıt bulunamadı.")
 
 # --- YÖNETİM ---
 def render_tab(table_name, title, columns_map):
@@ -113,6 +117,6 @@ def render_tab(table_name, title, columns_map):
             for sid in edited_df[edited_df["Seç"] == True]["id"]: delete_data(table_name, sid)
             st.rerun()
 
-with tab_cek: render_tab("cekler", "Çek", {"cek_no": "Çek No", "aciklama": "Açıklama", "tutar": "Tutar"})
+with tab_cek: render_tab("cekler", "Çek", {"aciklama": "Açıklama", "tutar": "Tutar"})
 with tab_borc: render_tab("borclar", "Borç", {"alacakli": "Alacaklı", "aciklama": "Açıklama", "tutar": "Tutar"})
 with tab_dbs: render_tab("dbs_odemeler", "DBS", {"kurum_banka": "Kurum/Banka", "aciklama": "Açıklama", "tutar": "Tutar"})
