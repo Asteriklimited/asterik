@@ -33,11 +33,46 @@ tab_dash, tab_cek, tab_borc, tab_dbs = st.tabs(["📊 Dashboard", "📝 Çekler"
 
 # --- DASHBOARD ---
 with tab_dash:
-    st.header("Genel Durum")
+    st.header("📊 Genel Durum ve Bildirimler")
+    
+    # Tüm verileri güncel çek
     cek_df = get_data("cekler")
     borc_df = get_data("borclar")
     dbs_df = get_data("dbs_odemeler")
     
+    # Uyarı mantığı: Bugün + 3 gün
+    yarin = datetime.now().date() + timedelta(days=3)
+    bugun = datetime.now().date()
+    
+    uyarilar = []
+    
+    # Tüm tabloları birleştirip kontrol et
+    tum_veriler = []
+    if not cek_df.empty: 
+        cek_df['tip'] = 'Çek'
+        tum_veriler.append(cek_df)
+    if not borc_df.empty: 
+        borc_df['tip'] = 'Borç'
+        tum_veriler.append(borc_df)
+    if not dbs_df.empty: 
+        dbs_df['tip'] = 'DBS'
+        tum_veriler.append(dbs_df)
+    
+    if tum_veriler:
+        df_hepsi = pd.concat(tum_veriler)
+        df_hepsi['vade'] = pd.to_datetime(df_hepsi['vade']).dt.date
+        
+        # 3 GÜN İÇİNDE VADESİ GELENLER
+        yaklasanlar = df_hepsi[(df_hepsi['vade'] <= yarin) & (df_hepsi['durum'] == 'Ödenmedi')]
+        
+        if not yaklasanlar.empty:
+            for _, row in yaklasanlar.iterrows():
+                st.warning(f"⚠️ **{row['tip']} Ödemesi Yaklaştı!** | Vade: {row['vade']} | Tutar: {row['tutar']:,.2f} ₺ | Detay: {row['aciklama']}")
+        else:
+            st.success("✅ Yaklaşan ödemeniz bulunmuyor.")
+
+    # Özet Metrikler
+    st.markdown("---")
     col1, col2, col3 = st.columns(3)
     for df, col, label in [(borc_df, col1, "Borç"), (cek_df, col2, "Çek"), (dbs_df, col3, "DBS")]:
         if not df.empty and 'durum' in df.columns:
