@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-from datetime import datetime
+from datetime import datetime, timedelta # timedelta'yı buraya ekledik
 import io
 
 # --- BAĞLANTI AYARLARI ---
