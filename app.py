@@ -10,7 +10,7 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-st.set_page_config(page_title="Nakit Akış Yönetimi", layout="wide")
+st.set_page_config(page_title="Ödeme Takip", layout="wide")
 
 # --- VERİTABANI FONKSİYONLARI ---
 def get_data(table):
@@ -27,7 +27,7 @@ def delete_data(table, id):
     supabase.table(table).delete().eq("id", id).execute()
 
 # --- ARAYÜZ ---
-st.title("💸 Nakit Akış Yönetim Paneli (Online)")
+st.title("💸 Ödeme Takip")
 
 tab_dash, tab_cek, tab_borc, tab_dbs = st.tabs(["📊 Dashboard", "📝 Çekler", "💳 Borçlar", "🏦 DBS"])
 
