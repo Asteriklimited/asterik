@@ -57,10 +57,14 @@ with tab_dash:
         df_hepsi['vade'] = pd.to_datetime(df_hepsi['vade']).dt.date
         yaklasanlar = df_hepsi[(df_hepsi['vade'] <= yarin) & (df_hepsi['durum'] == 'Ödenmedi')]
         
+        # --- DASHBOARD GÜNCELLEMESİ ---
+# Dashboard içindeki if not yaklasanlar.empty bloğunu şu şekilde güncelleyin:
+
         if not yaklasanlar.empty:
             for _, row in yaklasanlar.iterrows():
-                st.warning(f"⚠️ **{row['tip']} ({row['detay_bilgi']})** yaklaştı! Tutar: {row['tutar']:,.2f} ₺")
-    
+                # Buraya | Tarih: {row['vade']} kısmını ekledim
+                st.warning(f"⚠️ **{row['tip']} ({row['detay_bilgi']})** yaklaştı! | Tarih: {row['vade']} | Tutar: {row['tutar']:,.2f} ₺")
+                
     col1, col2, col3 = st.columns(3)
     for df, col, label in [(borc_df, col1, "Borç"), (cek_df, col2, "Çek"), (dbs_df, col3, "DBS")]:
         if not df.empty and 'durum' in df.columns:
