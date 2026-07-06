@@ -17,7 +17,7 @@ def get_data(table):
     return pd.DataFrame(response.data)
 
 def add_data(table, data):
-    # Vade sistem için şart, gizli otomatik ekleniyor
+    # Kaydedilirken otomatik olarak bugünün tarihi atanır
     data['vade'] = datetime.now().strftime('%Y-%m-%d')
     supabase.table(table).insert(data).execute()
 
@@ -29,7 +29,6 @@ def delete_data(table, id):
 
 # --- DETAY BELİRLEME MANTIĞI ---
 def get_detay(row, tip):
-    # Çekler için açıklamayı baz alıyoruz, diğerleri için kendi özel sütunları
     if tip == 'Çek': return row.get('aciklama', '')
     if tip == 'Borç': return row.get('alacakli', '')
     if tip == 'DBS': return row.get('kurum_banka', '')
@@ -57,14 +56,10 @@ with tab_dash:
         df_hepsi['vade'] = pd.to_datetime(df_hepsi['vade']).dt.date
         yaklasanlar = df_hepsi[(df_hepsi['vade'] <= yarin) & (df_hepsi['durum'] == 'Ödenmedi')]
         
-        # --- DASHBOARD GÜNCELLEMESİ ---
-# Dashboard içindeki if not yaklasanlar.empty bloğunu şu şekilde güncelleyin:
-
         if not yaklasanlar.empty:
             for _, row in yaklasanlar.iterrows():
-                # Buraya | Tarih: {row['vade']} kısmını ekledim
                 st.warning(f"⚠️ **{row['tip']} ({row['detay_bilgi']})** yaklaştı! | Tarih: {row['vade']} | Tutar: {row['tutar']:,.2f} ₺")
-                
+    
     col1, col2, col3 = st.columns(3)
     for df, col, label in [(borc_df, col1, "Borç"), (cek_df, col2, "Çek"), (dbs_df, col3, "DBS")]:
         if not df.empty and 'durum' in df.columns:
@@ -85,7 +80,8 @@ with tab_aylik:
                 f_df = df[df['vade'].dt.month == ay_map[ay_secimi]]
                 if not f_df.empty:
                     f_df['Detay'] = f_df.apply(lambda row: get_detay(row, tip), axis=1)
-                    r_list.append(f_df[['Detay', 'aciklama', 'tutar', 'durum']])
+                    f_df['Tarih'] = f_df['vade'].dt.strftime('%Y-%m-%d')
+                    r_list.append(f_df[['Tarih', 'Detay', 'aciklama', 'tutar', 'durum']])
         
         if r_list:
             final_df = pd.concat(r_list)
@@ -106,7 +102,8 @@ def render_tab(table_name, title, columns_map):
 
     df = get_data(table_name)
     if not df.empty:
-        display_df = df.drop(columns=['vade'], errors='ignore')
+        # Tablolarda görünmesi için 'vade' sütununu 'Tarih' olarak adlandırıyoruz
+        display_df = df.rename(columns={'vade': 'Tarih'}, errors='ignore')
         display_df.insert(0, "Seç", False)
         edited_df = st.data_editor(display_df, use_container_width=True, hide_index=True)
         
