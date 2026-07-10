@@ -17,8 +17,6 @@ def get_data(table):
     return pd.DataFrame(response.data)
 
 def add_data(table, data):
-    # Kaydedilirken otomatik olarak bugünün tarihi atanır
-    data['vade'] = datetime.now().strftime('%Y-%m-%d')
     supabase.table(table).insert(data).execute()
 
 def update_status(table, id, status):
@@ -26,6 +24,10 @@ def update_status(table, id, status):
 
 def delete_data(table, id):
     supabase.table(table).delete().eq("id", id).execute()
+
+# Yeni: Tablodaki manuel düzenlemeleri (Tarih, Tutar vb.) veritabanına kaydetmek için fonksiyon
+def update_record(table, id, update_dict):
+    supabase.table(table).update(update_dict).eq("id", id).execute()
 
 # --- DETAY BELİRLEME MANTIĞI ---
 def get_detay(row, tip):
@@ -93,31 +95,83 @@ with tab_aylik:
 # --- YÖNETİM ---
 def render_tab(table_name, title, columns_map):
     st.header(title)
+    
+    # EKLEME FORMU
     with st.expander(f"➕ Yeni {title} Ekle"):
         with st.form(f"{table_name}_form", clear_on_submit=True):
-            inputs = {k: st.number_input(l, format="%.2f") if "tutar" in k else st.text_input(l) for k, l in columns_map.items()}
+            cols = st.columns(len(columns_map))
+            inputs = {}
+            for i, (key, label) in enumerate(columns_map.items()):
+                if "vade" in key:
+                    inputs[key] = cols[i].date_input(label, value=datetime.now())
+                elif "tutar" in key:
+                    inputs[key] = cols[i].number_input(label, format="%.2f")
+                else:
+                    inputs[key] = cols[i].text_input(label)
+            
             if st.form_submit_button("Kaydet"):
+                # Tarih objesini Supabase'in anlayacağı string formata çeviriyoruz
+                if "vade" in inputs:
+                    inputs["vade"] = inputs["vade"].strftime('%Y-%m-%d')
                 add_data(table_name, inputs)
                 st.rerun()
 
+    # TABLO VE DÜZENLEME
     df = get_data(table_name)
     if not df.empty:
-        # Tablolarda görünmesi için 'vade' sütununu 'Tarih' olarak adlandırıyoruz
-        display_df = df.rename(columns={'vade': 'Tarih'}, errors='ignore')
-        display_df.insert(0, "Seç", False)
-        edited_df = st.data_editor(display_df, use_container_width=True, hide_index=True)
+        # Tarih formatını düzenlenebilir hale getiriyoruz
+        df['vade'] = pd.to_datetime(df['vade']).dt.date
+        df.insert(0, "Seç", False)
         
-        c1, c2, c3 = st.columns(3)
+        # Tablo ayarları
+        edited_df = st.data_editor(
+            df, 
+            column_config={
+                "id": None, # ID sütununu gizle
+                "vade": st.column_config.DateColumn("Tarih", format="DD.MM.YYYY"), # Vadeyi Tarih olarak göster
+                "durum": st.column_config.TextColumn("Durum", disabled=True)
+            },
+            use_container_width=True, 
+            hide_index=True
+        )
+        
+        st.markdown("💡 *Tabloya çift tıklayarak tarih, tutar veya açıklamayı değiştirebilirsiniz.*")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        
         if c1.button("✅ Ödendi", key=f"b1_{table_name}"):
             for sid in edited_df[edited_df["Seç"] == True]["id"]: update_status(table_name, sid, 'Ödendi')
             st.rerun()
+            
         if c2.button("⏳ Ödenmedi", key=f"b2_{table_name}"):
             for sid in edited_df[edited_df["Seç"] == True]["id"]: update_status(table_name, sid, 'Ödenmedi')
             st.rerun()
+            
         if c3.button("🗑️ Sil", key=f"b3_{table_name}"):
             for sid in edited_df[edited_df["Seç"] == True]["id"]: delete_data(table_name, sid)
             st.rerun()
+            
+        # YENİ: Değişiklikleri Veritabanına Kaydet Butonu
+        if c4.button("💾 Değişiklikleri Kaydet", key=f"b4_{table_name}"):
+            for index, row in edited_df.iterrows():
+                orig_row = df.loc[index]
+                updates = {}
+                # Eğer tabloda tarih veya tutar değiştirilmişse, güncellenecekler listesine ekle
+                if str(row['vade']) != str(orig_row['vade']): updates['vade'] = str(row['vade'])
+                if float(row['tutar']) != float(orig_row['tutar']): updates['tutar'] = float(row['tutar'])
+                
+                # Diğer sütunları da kontrol et (Açıklama, vs.)
+                for col in columns_map.keys():
+                    if col not in ['vade', 'tutar'] and str(row[col]) != str(orig_row[col]):
+                        updates[col] = str(row[col])
+                
+                # Eğer bir değişiklik tespit edildiyse Supabase'e gönder
+                if updates:
+                    update_record(table_name, row['id'], updates)
+            
+            st.rerun()
 
-with tab_cek: render_tab("cekler", "Çek", {"aciklama": "Açıklama", "tutar": "Tutar"})
-with tab_borc: render_tab("borclar", "Borç", {"alacakli": "Alacaklı", "aciklama": "Açıklama", "tutar": "Tutar"})
-with tab_dbs: render_tab("dbs_odemeler", "DBS", {"kurum_banka": "Kurum/Banka", "aciklama": "Açıklama", "tutar": "Tutar"})
+# FORM SÜTUN HARİTALARI (vade = Tarih eklendi)
+with tab_cek: render_tab("cekler", "Çek", {"vade": "Tarih", "aciklama": "Açıklama", "tutar": "Tutar"})
+with tab_borc: render_tab("borclar", "Borç", {"vade": "Tarih", "alacakli": "Alacaklı", "aciklama": "Açıklama", "tutar": "Tutar"})
+with tab_dbs: render_tab("dbs_odemeler", "DBS", {"vade": "Tarih", "kurum_banka": "Kurum/Banka", "aciklama": "Açıklama", "tutar": "Tutar"})
